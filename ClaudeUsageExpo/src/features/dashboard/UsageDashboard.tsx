@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -62,6 +63,7 @@ import {
   BUILT_IN_BACKGROUNDS,
   DEFAULT_BACKGROUND_ID,
   GLASS_TOKENS,
+  isImageBackground,
   type BackgroundId,
 } from '@/src/features/dashboard/glass';
 import { ResetLabel, type ResetFormat } from '@/src/features/dashboard/ResetLabel';
@@ -427,6 +429,10 @@ export function UsageDashboard() {
   const [backgroundError, setBackgroundError] = useState<string | null>(null);
   // Android blurs this view rather than whatever happens to be behind each pane.
   const blurTargetRef = useRef<View | null>(null);
+  // A native Modal renders in a separate Android window, so it needs its own backdrop
+  // target. Reusing the dashboard target makes glass panes sample the hidden window and
+  // can leave the login screen transparent over the system's white modal background.
+  const loginBlurTargetRef = useRef<View | null>(null);
   const [errorMessages, setErrorMessages] = useState<ProviderRecord<string | null>>({ claude: null, codex: null });
   const [loginStatus, setLoginStatus] = useState('Laddar Claudes säkra inloggning…');
   const [codexLogin, setCodexLogin] = useState<CodexLoginState | null>(null);
@@ -855,7 +861,7 @@ export function UsageDashboard() {
   const openCodexDevicePage = useCallback((authorization = codexLogin?.authorization) => {
     if (!authorization) return;
     void WebBrowser.openBrowserAsync(authorization.verificationUrl).catch(() => {
-      setLoginStatus('Safari kunde inte öppnas. Tryck Öppna och försök igen.');
+      setLoginStatus('Webbläsaren kunde inte öppnas. Tryck Öppna och försök igen.');
     });
   }, [codexLogin?.authorization]);
 
@@ -1120,7 +1126,7 @@ export function UsageDashboard() {
 
   return (
     <GlassBackdropProvider
-      photo={isGlass && backgroundId === 'custom' && customBackgroundUri !== null}
+      photo={isGlass && (isImageBackground(backgroundId) || (backgroundId === 'custom' && customBackgroundUri !== null))}
       targetRef={blurTargetRef}>
       <View style={[styles.root, isMonitorMode && styles.monitorRoot]}>
         {isGlass ? (
@@ -1346,29 +1352,48 @@ export function UsageDashboard() {
           </SafeAreaView>
         )}
 
-        <View
-          style={[
-            isShowingLogin ? styles.loginOverlayVisible : styles.loginOverlayHidden,
-            {
-              pointerEvents: isShowingLogin ? 'auto' : 'none',
-              paddingTop: insets.top,
-              paddingBottom: insets.bottom,
-              paddingLeft: insets.left,
-              paddingRight: insets.right,
-            },
-          ]}>
+        <Modal
+          animationType="slide"
+          hardwareAccelerated
+          onRequestClose={dismissLogin}
+          presentationStyle="fullScreen"
+          visible={isShowingLogin}>
+          <GlassBackdropProvider
+            photo={isGlass && (isImageBackground(backgroundId) || (backgroundId === 'custom' && customBackgroundUri !== null))}
+            targetRef={loginBlurTargetRef}>
+            <View style={styles.loginModal}>
+              {isGlass ? (
+                <AppBackground
+                  backgroundId={backgroundId}
+                  customUri={customBackgroundUri}
+                  targetRef={loginBlurTargetRef}
+                />
+              ) : null}
+              <SafeAreaView
+                accessibilityViewIsModal
+                edges={['top', 'bottom', 'left', 'right']}
+                style={styles.loginSafeArea}>
             <View style={styles.loginHeader}>
-              <Pressable accessibilityRole="button" onPress={dismissLogin} hitSlop={12}>
+              <Pressable
+                accessibilityLabel="Stäng inloggningen"
+                accessibilityRole="button"
+                hitSlop={12}
+                onPress={dismissLogin}
+                style={styles.loginHeaderAction}>
                 <Text style={styles.loginAction}>Avbryt</Text>
               </Pressable>
               <Text style={styles.loginTitle}>
                 {activeProvider === 'codex' ? 'Anslut Codex' : 'Logga in på Claude'}
               </Text>
               {activeProvider === 'codex' ? (
-                <View style={styles.loginHeaderSpacer} />
+                <View style={styles.loginHeaderAction} />
               ) : (
-                <Pressable accessibilityRole="button" onPress={refresh} hitSlop={12}>
-                  <Text style={styles.loginAction}>Klar</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  hitSlop={12}
+                  onPress={refresh}
+                  style={styles.loginHeaderAction}>
+                  <Text style={[styles.loginAction, styles.loginActionRight]}>Klar</Text>
                 </Pressable>
               )}
             </View>
@@ -1387,7 +1412,7 @@ export function UsageDashboard() {
                   <Ionicons name="shield-checkmark-outline" size={34} color={palette.accent} />
                 </View>
                 <Text style={styles.deviceLoginTitle}>
-                  {codexLogin?.phase === 'prerequisite' ? 'Tillåt Codex-inloggning' : 'Logga in säkert i Safari'}
+                  {codexLogin?.phase === 'prerequisite' ? 'Tillåt Codex-inloggning' : 'Logga in säkert hos OpenAI'}
                 </Text>
                 {codexLogin?.phase === 'prerequisite' ? (
                   <>
@@ -1445,7 +1470,7 @@ export function UsageDashboard() {
                       </View>
                       <View style={styles.deviceStep}>
                         <View style={styles.deviceStepNumber}><Text style={styles.deviceStepNumberText}>2</Text></View>
-                        <Text style={styles.deviceStepText}>Öppna OpenAI i Safari och klistra in koden.</Text>
+                        <Text style={styles.deviceStepText}>Öppna OpenAI i webbläsaren och klistra in koden.</Text>
                       </View>
                       <View style={styles.deviceStep}>
                         <View style={styles.deviceStepNumber}><Text style={styles.deviceStepNumberText}>3</Text></View>
@@ -1476,11 +1501,11 @@ export function UsageDashboard() {
                       <Ionicons name={isCodexCodeCopied ? 'checkmark' : 'copy-outline'} size={19} color={palette.accentInk} />
                     </Pressable>
                     <Pressable
-                      accessibilityLabel="Öppna OpenAI i Safari"
+                      accessibilityLabel="Öppna OpenAI i webbläsaren"
                       accessibilityRole="button"
                       onPress={() => openCodexDevicePage()}
                       style={({ pressed }) => [styles.deviceLoginSecondaryButton, pressed && styles.pressed]}>
-                      <Text style={styles.deviceLoginSecondaryButtonText}>Öppna OpenAI i Safari</Text>
+                      <Text style={styles.deviceLoginSecondaryButtonText}>Öppna OpenAI i webbläsaren</Text>
                       <Ionicons name="open-outline" size={19} color={palette.ink} />
                     </Pressable>
                   </View>
@@ -1511,7 +1536,10 @@ export function UsageDashboard() {
                 />
               </View>
             )}
-        </View>
+              </SafeAreaView>
+            </View>
+          </GlassBackdropProvider>
+        </Modal>
 
         {isMenuOpen ? (
           <Animated.View
@@ -1631,18 +1659,26 @@ export function UsageDashboard() {
                             accessibilityState={{ checked: isSelected }}
                             onPress={() => chooseBuiltInBackground(background.id)}
                             style={({ pressed }) => [styles.menuRow, pressed && styles.pressed]}>
-                            <View
-                              style={[
-                                styles.backgroundSwatch,
-                                { backgroundColor: background.colors[0] },
-                              ]}>
+                            {background.image ? (
+                              <Image
+                                contentFit="cover"
+                                source={background.image}
+                                style={styles.backgroundSwatch}
+                              />
+                            ) : (
                               <View
                                 style={[
-                                  styles.backgroundSwatchInner,
-                                  { backgroundColor: background.colors[2] },
-                                ]}
-                              />
-                            </View>
+                                  styles.backgroundSwatch,
+                                  { backgroundColor: background.colors[0] },
+                                ]}>
+                                <View
+                                  style={[
+                                    styles.backgroundSwatchInner,
+                                    { backgroundColor: background.colors[2] },
+                                  ]}
+                                />
+                              </View>
+                            )}
                             <View style={styles.menuRowCopy}>
                               <Text style={styles.menuRowTitle}>{background.label}</Text>
                               <Text style={styles.menuRowStatus}>{background.note}</Text>
@@ -2788,8 +2824,8 @@ function createStyles(
     assuranceText: { flex: 1, color: palette.secondary, fontSize: 14, lineHeight: 20 },
     errorCard: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', padding: 14, borderRadius: 12, backgroundColor: palette.errorBackground },
     errorText: { flex: 1, color: palette.errorText, fontSize: 13, lineHeight: 19 },
-    loginOverlayVisible: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10, opacity: 1, backgroundColor: palette.surface },
-    loginOverlayHidden: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: -1, opacity: 0, backgroundColor: palette.surface },
+    loginModal: { flex: 1, backgroundColor: palette.surface },
+    loginSafeArea: { flex: 1 },
     loginHeader: { minHeight: 56, paddingVertical: 8, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line, backgroundColor: palette.surface },
     loginTitle: { color: palette.ink, fontSize: 17, fontWeight: '700' },
     loginAction: {
@@ -2801,6 +2837,8 @@ function createStyles(
       lineHeight: 44,
     },
     loginHeaderSpacer: { width: 48 },
+    loginHeaderAction: { minWidth: 64, minHeight: 44, justifyContent: 'center' },
+    loginActionRight: { textAlign: 'right' },
     loginHint: { minHeight: 54, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: palette.accentSoft, flexDirection: 'row', alignItems: 'center', gap: 10 },
     loginHintCompact: { minHeight: 38, paddingVertical: 5 },
     loginHintText: { flex: 1, color: palette.ink, fontSize: 13, lineHeight: 18 },

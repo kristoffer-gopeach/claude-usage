@@ -21,11 +21,11 @@
  * both backdrops and can only ever add contrast.
  *
  * A BLUR IS NOT ENOUGH ON ITS OWN. It only shows where the backdrop has detail to smear,
- * and the built-in gradients deliberately have none, so over the default background a pane
- * with nothing but a blur is indistinguishable from a flat card. On Android below SDK 31
+ * and the built-in gradients deliberately have none, so over a gradient preset a pane with
+ * nothing but a blur is indistinguishable from a flat card. On Android below SDK 31
  * there is no blur at all: expo-blur's dimezisBlurViewSdk31Plus falls back to none. The
  * sheen is what carries the surface in both cases, and it needs no blur, no GPU feature and
- * no platform support. Over the default graphite gradient it gives a 1.20x to 1.27x light
+ * no platform support. Over the graphite gradient it gives a 1.20x to 1.27x light
  * gradient across each pane, and makes the pane 1.25x to 1.36x brighter than the bare
  * background beside it.
  *
@@ -149,7 +149,16 @@ export function withAlpha(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-export type BackgroundId = 'graphite' | 'dusk' | 'forest' | 'ember' | 'custom';
+export type BackgroundId =
+  | 'aurora'
+  | 'topographic'
+  | 'neon-grid'
+  | 'cosmic-ink'
+  | 'graphite'
+  | 'dusk'
+  | 'forest'
+  | 'ember'
+  | 'custom';
 
 export type BuiltInBackground = {
   id: Exclude<BackgroundId, 'custom'>;
@@ -157,12 +166,14 @@ export type BuiltInBackground = {
   note: string;
   /** Three stops read as depth where two read as a flat wash. */
   colors: [string, string, string];
+  /** Static require values are numbers on native and are resolved by Metro. */
+  image?: number;
 };
 
 /**
- * Built-in backgrounds are painted as gradients rather than shipped as images, so the
- * bundle stays the same size and each one is correct at any screen size. A gradient also
- * gives the blur something to actually blur: over a flat colour the effect is invisible.
+ * The first presets are generated artwork selected for a calm, dark centre behind the UI;
+ * the remaining presets stay as lightweight gradients. Both kinds retain three fallback
+ * colours so the picker can render immediately while an image is decoded.
  *
  * Every stop here is part of the contrast derivation above. Adding a lighter one than
  * #233156 would invalidate it, so re-measure before changing this list.
@@ -171,13 +182,46 @@ export type BuiltInBackground = {
  * are New Architecture only and unavailable in Expo Go, which is what this app runs in.
  */
 export const BUILT_IN_BACKGROUNDS: BuiltInBackground[] = [
-  { id: 'graphite', label: 'Grafit', note: 'Standard, neutralt mörk', colors: ['#1E222B', '#12151B', '#08090C'] },
+  {
+    id: 'aurora',
+    label: 'Norrskensväv',
+    note: 'Ljusband i aqua och syren',
+    colors: ['#112B4B', '#121A3A', '#070A16'],
+    image: require('../../../assets/images/glass-backgrounds/aurora-weave.jpg'),
+  },
+  {
+    id: 'topographic',
+    label: 'Topografisk metall',
+    note: 'Pärlemor, isblått och mint',
+    colors: ['#263344', '#11161D', '#05070A'],
+    image: require('../../../assets/images/glass-backgrounds/topographic-metal.jpg'),
+  },
+  {
+    id: 'neon-grid',
+    label: 'Neonnät',
+    note: 'Luftigt nät i mjuk pastell',
+    colors: ['#152743', '#17142E', '#070811'],
+    image: require('../../../assets/images/glass-backgrounds/neon-grid.jpg'),
+  },
+  {
+    id: 'cosmic-ink',
+    label: 'Kosmiskt bläck',
+    note: 'Mjuka färgfält i pastell',
+    colors: ['#332039', '#1B1024', '#09060D'],
+    image: require('../../../assets/images/glass-backgrounds/cosmic-ink.jpg'),
+  },
+  { id: 'graphite', label: 'Grafit', note: 'Neutralt mörk', colors: ['#1E222B', '#12151B', '#08090C'] },
   { id: 'dusk', label: 'Skymning', note: 'Djupblå mot lila', colors: ['#233156', '#1A1836', '#0C0A18'] },
   { id: 'forest', label: 'Skog', note: 'Mörkgrön mot svart', colors: ['#17332A', '#0E1F19', '#050A08'] },
   { id: 'ember', label: 'Glöd', note: 'Varm brun mot svart', colors: ['#3A1F16', '#22110C', '#0A0504'] },
 ];
 
-export const DEFAULT_BACKGROUND_ID: BackgroundId = 'graphite';
+export const DEFAULT_BACKGROUND_ID: BackgroundId = 'aurora';
+
+export function isImageBackground(id: BackgroundId): boolean {
+  if (id === 'custom') return false;
+  return findBuiltInBackground(id).image !== undefined;
+}
 
 export function findBuiltInBackground(id: BackgroundId): BuiltInBackground {
   return (

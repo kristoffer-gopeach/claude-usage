@@ -43,6 +43,10 @@ export function AppBackground({
   targetRef: RefObject<View | null>;
 }) {
   const isCustom = backgroundId === 'custom' && customUri !== null;
+  const selectedBackground = findBuiltInBackground(backgroundId);
+  const imageSource = isCustom
+    ? { uri: customUri }
+    : selectedBackground.image;
   const reduceMotion = useReducedMotion();
   const entering = reduceMotion ? undefined : FadeIn.duration(MOTION.move.duration);
   const exiting = reduceMotion ? undefined : FadeOut.duration(MOTION.move.duration);
@@ -50,13 +54,17 @@ export function AppBackground({
   return (
     <BlurTargetView ref={targetRef} style={styles.layer}>
       <View style={[styles.layer, styles.base]} />
-      {isCustom ? (
-        <Animated.View entering={entering} exiting={exiting} key={customUri} style={styles.layer}>
+      {imageSource ? (
+        <Animated.View
+          entering={entering}
+          exiting={exiting}
+          key={isCustom ? customUri : backgroundId}
+          style={styles.layer}>
           <Image
             // cover keeps any aspect ratio filling the screen without distorting it,
             // which matters because the user can pick a photo of any shape.
             contentFit="cover"
-            source={{ uri: customUri }}
+            source={imageSource}
             style={styles.layer}
             transition={MOTION.move.duration}
           />
