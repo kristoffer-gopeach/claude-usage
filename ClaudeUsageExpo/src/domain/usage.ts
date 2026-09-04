@@ -22,8 +22,7 @@ export function parseUsagePayload(body: string, fetchedAt = new Date()): UsageSn
   if (fiveHour) windows.push(fiveHour);
   if (weekly) windows.push(weekly);
 
-  const scoped = parseScopedWindow(payload.limits);
-  if (scoped) windows.push(scoped);
+  windows.push(...parseScopedWindows(payload.limits));
 
   if (windows.length === 0) {
     throw new Error('Claude returned usage data in an unsupported format.');
@@ -38,6 +37,7 @@ export function parseCodexUsagePayload(body: string, fetchedAt = new Date()): Us
   const primary = parseCodexWindow(rateLimits.primary_window ?? rateLimits.primary, fetchedAt);
   const secondary = parseCodexWindow(rateLimits.secondary_window ?? rateLimits.secondary, fetchedAt);
   const candidates = [primary, secondary].filter((window): window is ParsedCodexWindow => window !== null);
+
   const windows = mapCodexWindowsByDuration(candidates);
 
   if (windows.length === 0) {
@@ -61,6 +61,62 @@ export function createExperimentReport(snapshot: UsageSnapshot, durationSeconds:
   ].join('\n');
 }
 
+/**
+ * Cached snapshots survive app restarts so the dashboard can render the last known
+ * state immediately instead of opening on a spinner. Dates have to be written as ISO
+ * strings, because JSON.parse would otherwise hand back plain strings for resetsAt.
+ */
+type StoredSnapshot = {
+  windows: { id: UsageWindow['id']; title: string; utilization: number; resetsAt: string | null }[];
+  fetchedAt: string;
+};
+
+const SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+export function serializeSnapshot(snapshot: UsageSnapshot): StoredSnapshot {
+  return {
+    fetchedAt: snapshot.fetchedAt.toISOString(),
+    windows: snapshot.windows.map((window) => ({
+      id: window.id,
+      title: window.title,
+      utilization: window.utilization,
+      resetsAt: window.resetsAt?.toISOString() ?? null,
+    })),
+  };
+}
+
+export function deserializeSnapshot(value: unknown): UsageSnapshot | null {
+  if (!isRecord(value) || !Array.isArray(value.windows)) return null;
+
+  const fetchedAt = parseDate(value.fetchedAt);
+  if (!fetchedAt) return null;
+
+  const windows = value.windows.flatMap((item): UsageWindow[] => {
+    if (!isRecord(item) || typeof item.utilization !== 'number' || typeof item.title !== 'string') {
+      return [];
+    }
+    if (item.id !== 'five-hour' && item.id !== 'weekly' && item.id !== 'scoped') return [];
+
+    return [{
+      id: item.id,
+      title: item.title,
+      utilization: clampUtilization(item.utilization),
+      resetsAt: parseDate(item.resetsAt),
+    }];
+  });
+
+  return windows.length === 0 ? null : { windows, fetchedAt };
+}
+
+/**
+ * A cached snapshot is only worth showing while none of its windows has reset. Once a
+ * reset time has passed the utilization it reports is provably wrong, not merely old.
+ */
+export function hasSnapshotExpired(snapshot: UsageSnapshot, now = new Date()): boolean {
+  if (now.getTime() - snapshot.fetchedAt.getTime() > SNAPSHOT_MAX_AGE_MS) return true;
+  return snapshot.windows.some((window) => window.resetsAt !== null && window.resetsAt.getTime() <= now.getTime());
+}
+
 export function clampUtilization(value: number): number {
   return Math.min(100, Math.max(0, value));
 }
@@ -80,8 +136,14 @@ function parseWindow(
   };
 }
 
-function parseScopedWindow(value: unknown): UsageWindow | null {
-  if (!Array.isArray(value)) return null;
+/**
+ * Claude can return a weekly cap per model. Every one of them is worth showing, because
+ * knowing that Opus sits at 85 percent while Sonnet sits at 12 is what actually decides
+ * which model to reach for. This used to sort the list and keep only the busiest entry,
+ * which silently hid every other model the account had a cap for.
+ */
+function parseScopedWindows(value: unknown): UsageWindow[] {
+  if (!Array.isArray(value)) return [];
 
   const candidates = value.flatMap((item): UsageWindow[] => {
     if (!isRecord(item) || item.kind !== 'weekly_scoped' || typeof item.percent !== 'number') {
@@ -100,7 +162,7 @@ function parseScopedWindow(value: unknown): UsageWindow | null {
     }];
   });
 
-  return candidates.sort((left, right) => right.utilization - left.utilization)[0] ?? null;
+  return candidates.sort((left, right) => right.utilization - left.utilization);
 }
 
 function parseCodexWindow(
@@ -142,6 +204,11 @@ function mapCodexWindowsByDuration(candidates: ParsedCodexWindow[]): UsageWindow
 
   // Codex can return a weekly-only limit in primary_window. The declared duration,
   // rather than the primary/secondary position, identifies what the window means.
+  //
+  // Observed live 2026-09-04: primary_window declared 18000 seconds and secondary_window
+  // 604800, so five hours and seven days exactly, and the mapping below matched both.
+  // `used_percent` came back as whole integers (1 and 63) with no fractional part, which
+  // sets the floor for anything that measures change between two readings.
   const fiveHour =
     take((window) => window.durationSeconds === 18_000) ??
     take((window) => window.durationSeconds !== null && window.durationSeconds < 86_400);
