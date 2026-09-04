@@ -64,7 +64,6 @@ export function RefreshProgressBar({
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
       onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
-      pointerEvents="none"
       style={[styles.track, { backgroundColor: isActive ? trackColor : 'transparent' }]}>
       {isActive && width > 0 ? (
         <Animated.View
@@ -80,6 +79,6 @@ export function RefreshProgressBar({
 }
 
 const styles = StyleSheet.create({
-  track: { height: 3, borderRadius: 2, overflow: 'hidden' },
+  track: { height: 3, borderRadius: 2, overflow: 'hidden', pointerEvents: 'none' },
   segment: { position: 'absolute', top: 0, bottom: 0, borderRadius: 2 },
 });

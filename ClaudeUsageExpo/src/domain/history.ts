@@ -121,12 +121,17 @@ const MIN_PULSE_SPAN_MS = 20 * 1000;
  * restart, so two stored readings from a previous session would keep claiming activity on
  * a cold start without anything having been measured. Passing the timestamp of a reading
  * taken in this session forces the claim to rest on a live measurement.
+ *
+ * `null` means no reading has been taken in this session, so the answer is no. It used to
+ * mean "skip the check", which had the default pointing the wrong way for a guard: a
+ * caller that simply omitted the argument got the old bug back. The one call site already
+ * checked before calling, so this only closes the trap for the next one.
  */
 export function computeRecentDelta(
   history: UsageSample[],
   key: string,
   now = new Date(),
-  requireSampleAt: number | null = null,
+  requireSampleAt: number | null,
 ): RecentDelta | null {
   const series = history
     .filter((sample) => typeof sample.values[key] === 'number')
@@ -138,7 +143,7 @@ export function computeRecentDelta(
   const previous = series[series.length - 2];
 
   // Nothing has been measured in this session, so there is nothing to claim.
-  if (requireSampleAt !== null && last.at !== requireSampleAt) return null;
+  if (requireSampleAt === null || last.at !== requireSampleAt) return null;
 
   // A stale log should not keep claiming activity after the app has been closed a while.
   if (now.getTime() - last.at > MAX_PULSE_SPAN_MS) return null;

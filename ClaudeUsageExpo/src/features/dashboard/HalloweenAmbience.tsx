@@ -46,7 +46,6 @@ export function HalloweenAmbience() {
     <View
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      pointerEvents="none"
       style={styles.layer}>
       {FLOATERS.map((floater, index) => (
         <FloatingGlyph floater={floater} key={`${floater.glyph}-${index}`} />
@@ -129,13 +128,13 @@ export function CandleGlow() {
 
   const animatedStyle = useAnimatedStyle(() => ({ opacity: glow.value * 0.15 }));
 
-  return <Animated.View pointerEvents="none" style={[styles.glow, animatedStyle]} />;
+  return <Animated.View style={[styles.glow, animatedStyle]} />;
 }
 
 const styles = StyleSheet.create({
   // Written out rather than using StyleSheet.absoluteFillObject, which React Native 0.86
   // removed. Spreading that missing helper is what silently broke the login overlay.
-  layer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0 },
+  layer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0, pointerEvents: 'none' },
   floater: { position: 'absolute' },
   glow: {
     position: 'absolute',
@@ -145,5 +144,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     borderRadius: 16,
     backgroundColor: '#FFD9A0',
+    pointerEvents: 'none',
   },
 });

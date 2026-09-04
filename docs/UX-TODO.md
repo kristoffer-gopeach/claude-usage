@@ -777,3 +777,122 @@ Det här fungerar redan och ska inte "förbättras".
 - Inga `console.`-anrop i `src/`, så inga tokens läcker till Metro-loggen
 - Färgtemat per tjänst, som gör det omöjligt att missta Claude för Codex
 - 429-hanteringen, som redan har ett åtgärdsinriktat meddelande
+
+---
+
+## Beslutslogg · Glastemat
+
+### Panelen lyfter med ljus över gradient, sjunker med mörker över foto
+Första versionen la ett fast mörkt skikt på 0,72 under varje panel. Det var mätt mot värsta fallet "helvit bakgrund", men gällde även de inbyggda gradienterna, och där köper det ingenting: mot den ljusaste punkt någon inbyggd bakgrund innehåller (`#233156`, toppen av Skymning) klarar **en helt genomskinlig panel** AA med ink 11,92:1, sekundär 7,88:1 och tertiär 4,86:1. Skiktet dolde alltså hela effekten utan att bidra till läsbarheten, och panelerna såg ut som vanliga mörka kort.
+
+Nu avgörs riktningen av om bakgrunden är känd:
+
+- **Inbyggd gradient** · känd och mörk, så panelen lyfter med ljus, `liftAlpha` 0,11
+- **Egen bild** · okänd, så panelen sjunker med mörker, `scrimAlpha` 0,62 plus 0,42 direkt på bilden
+- **Panel på panel** · mörknar alltid, `raisedAlpha` 0,30, oavsett bakgrund
+
+Den sista regeln är ett eget beslut. Att lyfta med ljus ovanpå en redan ljuslyft panel adderades ihop, `#3d4a6a` blev `#5e6984`, och sekundärtexten föll till 3,40:1. Att mörkna är en regel för båda bakgrunderna och kan bara öka kontrasten.
+
+### Tre färger skiljer sig från övriga teman, och bara därför att de föll igenom
+`tertiary` `#B4B9C2`, accenten `#F4A488` (Claude) / `#99B7F7` (Codex) och `danger` `#FF9C93`. Var och en är det ljusaste värdet på sin egen kulör som fortfarande klarar 4,5:1 på alla åtta paneler. Accenten används som textfärg ("Logga in", "Stäng"), inte bara som fyllning, så ett fyllningsvärde hade inte räckt.
+
+Sämsta värde över samtliga åtta fall: ink 8,49 · sekundär 5,61 · tertiär 4,62 · Claude-accent 4,56 · Codex-accent 4,54 · success 4,53 · danger 4,52. Varje panel skiljer sig också synligt från det som ligger under, mellan 1,20x och 3,93x.
+
+### Android behöver ett blurTarget, annars finns ingen blur alls
+`expo-blur` tvingar `BlurMethod.NONE` om en `BlurView` inte får ett `blurTarget`, och målar då ett platt skikt i stället. Det står i `ExpoBlurView.kt`:
+
+```kotlin
+val safeMethod = if (blurTarget != null) { method } else { BlurMethod.NONE }
+```
+
+Därför ligger `AppBackground` i en `BlurTargetView` vars ref går via context till varje panel. Bara bakgrunden ligger i målet, aldrig panelerna, annars samplar bluren sig själv. På iOS är `BlurTargetView` en vanlig `View` och det kostar ingenting.
+
+Android lägger dessutom alltid på ett eget mörkt skikt med alfa `intensity/100 * 0,70` för varje mörkt material. Det kan bara mörkna, så det kan aldrig sänka ljus text under AA, men det gjorde att en panel med iOS-lyftet på 0,06 blev en smutsig fläck i stället för frostat glas. Därför är `liftAlpha` 0,11, mätt så att panelen syns tydligt (1,34x mot bakgrunden) på båda plattformarna.
+
+`blurMethod` ersätter `experimentalBlurMethod`, som är deprecerad, och varianten är `dimezisBlurViewSdk31Plus` eftersom `dimezisBlurView` enligt Expos egen dokumentation kostar prestanda på Android SDK 30 och lägre.
+
+### GlassSurface är avsiktligt inte animerad
+En tidigare version mjukade upp fyllningen med `useAnimatedStyle`. Det **kraschade appen**: worklet-en körde `glassFill` på UI-runtimen, där modulen och dess regex inte finns, och felet avbröt processen. Det gav heller ingenting, eftersom fyllningen bara ändras när bakgrunden gör det och `AppBackground` redan kryssblandar i det ögonblicket. Ett dussin paneler renderas samtidigt, så att komponenten är vanlig React håller den också billig.
+
+### Landskapsläget dolde temat helt
+`monitorSafeArea` hade `backgroundColor: '#0E0F11'` hårdkodat och `monitorPrimary` fylldes med `providerTheme.monitorAccent`. Tillsammans gjorde de landskapsläget "bara orange och mörkt" oavsett tema. Båda är nu genomskinliga när glastemat är aktivt, och panelernas innehåll vänder från mörk text på accentfyllning till ljus text på glas via `heroInk` / `heroFill` / `heroTrack` i `createStyles`.
+
+### Batteri
+- `useKeepAwake` anropades ovillkorligt och höll alltså skärmen tänd på **varje** skärm så länge appen var öppen. Den ligger nu i `<KeepScreenAwake />` som bara renderas i landskapsläget, som är det enda läget som är tänkt att stå på ett skrivbord. Hooken har ingen villkorlig form, därav komponenten
+- Pollningstimern revs tidigare inte ner när appen gick till bakgrunden, den fortsatte ticka varje minut och föll på en `AppState`-kontroll. Nu stoppas den vid bakgrund och startas igen vid återkomst, med en direkt uppdatering
+
+### Rubriken finns bara i porträttläge
+Landskapsläget startar utan rubrik, så panelerna får hela skärmen. Det gav också tillbaka den höjd som `monitorHeader` åt, vilket var det som klippte tredje gränsen på 320 punkters höjd.
+
+Rubriken är inte borttagen, bara dold. Ett tryck på skärmen visar den och den försvinner själv efter fyra sekunder. Anledningen är att menyn är enda vägen till inställningar, tema och bakgrund, och tjänstväljaren enda vägen att byta mellan Claude och Codex. Att tvinga en rotation för att nå dem hade varit ett sämre svar än ett tryck.
+
+Två saker som provades och förkastades:
+
+- **Rubriken som flytande lager över panelerna.** Den täckte veckosiffran, alltså precis det man kan vara mitt i att läsa. Den ligger nu i flödet igen, så panelerna krymper i stället för att skymmas, och geometrin blir exakt den som redan var verifierad
+- **Tryckytan med `accessibilityRole="button"`.** En knapp som omsluter andra knappar är fel semantik överallt, och på webben var det dessutom ogiltig markup, `<button>` inuti `<button>`, som React vägrade rendera. Ytan är nu `accessible={false}` och fungerar som en bakgrundsgest, så som man trycker på en video för att få fram dess kontroller
+
+`monitorRoot` hade också `#0E0F11` hårdkodat och är nu genomskinlig på glas, av samma skäl som `monitorSafeArea`.
+
+### Verifierat på Android 16 (API 36, arm64) i emulator
+`blurTarget`-fixen är bekräftad på riktigt, inte bara härledd ur källkoden. Testet var en egen bakgrundsbild av färgbrus med vitt rutnät på 24 pixlar, alltså innehåll med maximal detalj som en blur antingen förstör synligt eller inte alls:
+
+- **Bluren fungerar.** Rutnätet är utsmetat till mjuka färgfält bakom panelerna, medan miniatyrbilden i "Egen bild"-raden visar originalet skarpt precis intill. Utan `blurTarget` hade pixelrutnätet synts rakt igenom ett platt skikt
+- **Fotoskrimmen stämmer på decimalen.** Bildens vita fält renderas som `#9c9c9d`, exakt det värde 0,42 av `#07080A` över vitt ger i beräkningen
+- Menyn, temavalet, alla fyra bakgrunderna, Androids fotoväljare, "Återställ till standard" och dess villkorade synlighet fungerar
+- Panelerna sjunker med mörker över fotot och all text är läsbar, som mätningen förutsade
+- `raisedAlpha`-beslutet syns tydligt: menykorten läses som nedsänkta paneler på ett ljusare ark
+- Halloween-emojin renderar, och landskapsläget fungerar
+
+Två saker att veta om emulatorn: den dog upprepade gånger med `FATAL | Running multiple emulators with the same AVD` innan `multiinstance.lock` rensades, och en emulator startad med `&` från ett verktygsanrop överlever inte anropet, den måste dubbel-forkas och få egen session.
+
+### Appen är inte längre bara iOS, så copyn kan inte säga iPhone
+Fyra strängar namngav en plattform: "stannar på din iPhone", "iOS Keychain" på två ställen och "iOS-inställningarna". På Android var de direkt felaktiga. De säger nu "din enhet", "enhetens säkra lagring" och "systeminställningarna", vilket är sant på båda, eftersom expo-secure-store är Keychain på iOS och Keystore-backad krypterad lagring på Android. Användaragenten på rad 89 nämner fortfarande iPhone, men den är avsiktlig, den efterliknar Safari mot claude.ai.
+
+---
+
+## Beslutslogg · Domäntesterna tillbaka
+
+Testerna som fanns tidigare i arbetet blev aldrig committade och låg inte kvar på disk. De är återskapade: 45 tester över `history.ts` och `usage.ts`, alla gröna.
+
+### Node kör TypeScript själv, så inget testverktyg behövdes
+Node 24 strippar typer inbyggt och har en egen testkörare, och båda domänmodulerna är rena utan RN-importer. `npm test` är därför `node --test "src/**/*.test.ts"` utan jest, utan babel, utan transform. Enda nya beroendet är `@types/node`, som bara behövs för att typkolla testfilerna.
+
+Två saker som krävde en riktig lösning:
+
+- **Runtime-importer måste ha `.ts`-ändelsen.** `history.ts` importerar `./usage` utan ändelse och det fungerar, men bara därför att det är en `import type` som raderas helt före körning. En riktig import gör det inte, så testfilerna skriver `./history.ts` och `allowImportingTsExtensions` är påslaget
+- **Node-typerna är avgränsade till testerna.** Med `types: ["node"]` i huvudkonfigurationen hade appkod kunnat använda `Buffer` eller `fs` och typkolla igenom, men krascha på enheten. Nu ligger de i `tsconfig.test.json`, huvudkonfigurationen utesluter `**/*.test.ts`, och `npm run typecheck` kör båda. Verifierat i båda riktningarna: `Buffer` i appkod ger fel, och ett riktigt typfel i en testfil ger också fel
+
+Testerna hamnar inte i bundlen, eftersom Metro bygger på importgrafen. Kontrollerat: noll träffar på `node:test` i både iOS- och Android-bundlen.
+
+### Testerna hittade en riktig svaghet i `computeRecentDelta`
+Vakten mot falskt "Förbrukat" på kall start låg i `requireSampleAt`, men `null` betydde "hoppa över kontrollen". Standardvärdet pekade alltså åt fel håll för en säkerhetsvakt: en anropare som utelämnade argumentet fick tillbaka precis den bugg vakten fanns för. Appen var korrekt, eftersom det enda anropsstället redan kontrollerade `liveAt !== null` innan det anropade, men fällan låg kvar för nästa anropare.
+
+`null` betyder nu "ingen mätning i den här sessionen, alltså inget att påstå", vilket är det säkra svaret. Kontrollen på anropsstället är kvar, den sparar onödigt arbete.
+
+Tyngdpunkten i testerna ligger på vakterna, inte på de lyckade fallen, eftersom det är vakterna som varit fel: att en återställning inte får smitta takten, att ett fall i procent inte är aktivitet, att en tunn logg ger `null` i stället för en rad tomma staplar, och att varje modelltak följer med i stället för bara det högsta.
+
+---
+
+## Beslutslogg · Glaset får en yta som inte behöver någon blur
+
+### Problemet var inte att bluren var trasig
+Bluren fungerar på Android, det är verifierat. Men en blur syns bara där bakgrunden har detaljer att smeta ut, och de inbyggda gradienterna har medvetet inga. Över standardbakgrunden Grafit fanns det alltså ingenting för bluren att avslöja, och panelerna blev omöjliga att skilja från vanliga mörka kort. På iOS räddades det av systemmaterialet, som ljusar upp panelen även över en platt färg. Android har inget motsvarande.
+
+Dessutom stänger `dimezisBlurViewSdk31Plus` av bluren helt på Android under SDK 31, alltså Android 11 och äldre. Där finns ingen blur alls att förlita sig på.
+
+### Lösningen är en sheen, en ljusgradient över själva panelen
+Panelens eget ljus spenderas nu som en diagonal gradient i stället för en jämn hinna. Det kräver ingen blur, ingen GPU-funktion och inget plattformsstöd, och det är samma visuella språk på båda plattformarna.
+
+Sheenen kunde inte bara läggas ovanpå det som redan fanns. Paletten låg på 4,52:1 i värsta fallet, alltså utan marginal för mer ljus. Den **ersätter** den platta lyftningen i stället för att läggas till, så panelen spenderar samma ljus med riktning i stället för jämnt utspritt. Kontrasten blev till och med något bättre: sämsta värde 4,54 mot 4,52 tidigare.
+
+Toppvärdet beror på bakgrunden, precis som tonen redan gjorde:
+
+- **Inbyggd gradient** · sheen med topp 0,10. Det är fallet som behöver hjälp, eftersom bluren inte visar något där
+- **Egen bild** · sheen med topp 0,025, alltså bara en antydan. Där måste panelen vara mörk för att bära text, och där har bluren faktiskt detaljer att avslöja
+
+En enhetlig sheen på båda gick inte: fotofallet har ingen marginal och strypte den till 1,06x över panelen, vilket är osynligt.
+
+### Mätt på skärmdumpen, inte bara i modellen
+Uppmätt på Android över standardbakgrunden: **1,44x steg över panelen** och **1,62x mot den nakna bakgrunden intill**. Starkare än de 1,20x till 1,27x modellen förutsade, eftersom Androids egna mörka blurskikt drar ner panelens undre ände ytterligare.
+
+Den uppmätta ljusa hörnan blev `#37383c`, alltså mörkare än modellens värsta fall `#39435d`, vilket ger mer marginal snarare än mindre. Kontrasten mot den faktiska panelen: ink 10,93 · sekundär 7,22 · tertiär 5,94 · accent 5,86 och 5,84 · success 5,83 · danger 5,82. Allt klarar AA med god marginal.

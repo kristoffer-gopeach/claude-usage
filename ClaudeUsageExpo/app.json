@@ -37,6 +37,12 @@
           }
         }
       ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Appen läser en bild du väljer själv, för att använda den som bakgrund. Bilden stannar på enheten."
+        }
+      ],
       "expo-secure-store",
       "expo-font",
       "expo-image",
