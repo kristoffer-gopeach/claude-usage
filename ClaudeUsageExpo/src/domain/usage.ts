@@ -266,9 +266,9 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Hoisted: constructing an Intl formatter per call repeats a locale-data lookup. */
+const REPORT_NUMBER_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2, useGrouping: false });
+
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat('en-US', {
-    maximumFractionDigits: 2,
-    useGrouping: false,
-  }).format(value);
+  return REPORT_NUMBER_FORMAT.format(value);
 }

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useContext, useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Animated, {
   cancelAnimation,
@@ -11,6 +11,7 @@ import Animated, {
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
+import { AnimationActivityContext } from './renderActivity';
 
 /**
  * Decorative Halloween layer. It sits behind every card, never receives touches and never
@@ -56,30 +57,31 @@ export function HalloweenAmbience() {
 
 function FloatingGlyph({ floater }: { floater: Floater }) {
   const isReducedMotion = useReducedMotion();
+  const active = useContext(AnimationActivityContext);
   const progress = useSharedValue(0);
 
   useEffect(() => {
-    if (isReducedMotion || floater.durationMs === 0) {
-      progress.value = 0;
+    if (!active || isReducedMotion || floater.durationMs === 0) {
+      progress.set(0);
       return;
     }
 
-    progress.value = withDelay(
+    progress.set(withDelay(
       floater.delayMs,
       withRepeat(
         withTiming(1, { duration: floater.durationMs, easing: Easing.inOut(Easing.sin) }),
         -1,
         true,
       ),
-    );
+    ));
 
     return () => cancelAnimation(progress);
-  }, [floater.delayMs, floater.durationMs, isReducedMotion, progress]);
+  }, [active, floater.delayMs, floater.durationMs, isReducedMotion, progress]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
-      { translateY: progress.value * floater.drift },
-      { rotate: `${progress.value * floater.spin}deg` },
+      { translateY: progress.get() * floater.drift },
+      { rotate: `${progress.get() * floater.spin}deg` },
     ],
   }));
 
@@ -101,16 +103,17 @@ function FloatingGlyph({ floater }: { floater: Floater }) {
  */
 export function CandleGlow() {
   const isReducedMotion = useReducedMotion();
+  const active = useContext(AnimationActivityContext);
   const glow = useSharedValue(0.7);
 
   useEffect(() => {
-    if (isReducedMotion) {
-      glow.value = 0.7;
+    if (!active || isReducedMotion) {
+      glow.set(0.7);
       return;
     }
 
     // Deliberately uneven steps. An even pulse reads as a loading spinner, not a candle.
-    glow.value = withRepeat(
+    glow.set(withRepeat(
       withSequence(
         withTiming(1, { duration: 140 }),
         withTiming(0.62, { duration: 110 }),
@@ -121,12 +124,12 @@ export function CandleGlow() {
       ),
       -1,
       true,
-    );
+    ));
 
     return () => cancelAnimation(glow);
-  }, [glow, isReducedMotion]);
+  }, [active, glow, isReducedMotion]);
 
-  const animatedStyle = useAnimatedStyle(() => ({ opacity: glow.value * 0.15 }));
+  const animatedStyle = useAnimatedStyle(() => ({ opacity: glow.get() * 0.15 }));
 
   return <Animated.View style={[styles.glow, animatedStyle]} />;
 }

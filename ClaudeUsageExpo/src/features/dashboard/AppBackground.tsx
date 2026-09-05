@@ -66,7 +66,8 @@ export function AppBackground({
             contentFit="cover"
             source={imageSource}
             style={styles.layer}
-            transition={MOTION.move.duration}
+            // The parent already cross-fades; avoid a second full-screen transition.
+            transition={0}
           />
           <View
             style={[

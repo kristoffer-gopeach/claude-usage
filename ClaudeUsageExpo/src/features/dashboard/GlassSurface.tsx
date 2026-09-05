@@ -1,11 +1,12 @@
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import { createContext, useContext, type ReactNode, type RefObject } from 'react';
+import { createContext, useContext, useMemo, type ReactNode, type RefObject } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { GLASS_TOKENS, glassSheen, glassTone } from '@/src/features/dashboard/glass';
 
 type GlassBackdrop = {
+  active: boolean;
   /** Whether the backdrop is a user-picked photo, which decides lift versus sink. */
   photo: boolean;
   /**
@@ -21,15 +22,17 @@ type GlassBackdrop = {
  * site would mean touching all of them, so they travel by context and are provided once at
  * the dashboard root.
  */
-const GlassBackdropContext = createContext<GlassBackdrop>({ photo: false, targetRef: null });
+const GlassBackdropContext = createContext<GlassBackdrop>({ active: true, photo: false, targetRef: null });
 
 export function GlassBackdropProvider({
+  active = true,
   children,
   photo,
   targetRef,
-}: GlassBackdrop & { children: ReactNode }) {
+}: Omit<GlassBackdrop, 'active'> & { active?: boolean; children: ReactNode }) {
+  const value = useMemo(() => ({ active, photo, targetRef }), [active, photo, targetRef]);
   return (
-    <GlassBackdropContext.Provider value={{ photo, targetRef }}>
+    <GlassBackdropContext.Provider value={value}>
       {children}
     </GlassBackdropContext.Provider>
   );
@@ -67,7 +70,7 @@ export function GlassSurface({
   elevated?: boolean;
   radius?: number;
 }) {
-  const { photo, targetRef } = useContext(GlassBackdropContext);
+  const { active, photo, targetRef } = useContext(GlassBackdropContext);
   const tone = glassTone({ photo, raised: elevated });
   const sheen = glassSheen({ photo });
 
@@ -76,7 +79,7 @@ export function GlassSurface({
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
       style={[styles.fill, { borderRadius: radius }]}>
-      <BlurView
+      {active ? <BlurView
         // dimezisBlurViewSdk31Plus rather than dimezisBlurView: expo-blur documents the
         // latter as costing performance on Android SDK 30 and below, and falling back to a
         // flat tint there is a better trade than a janky one on an old phone.
@@ -86,7 +89,7 @@ export function GlassSurface({
         intensity={elevated ? GLASS_TOKENS.blurIntensity * 0.6 : GLASS_TOKENS.blurIntensity}
         style={styles.fill}
         tint={GLASS_TOKENS.blurTint}
-      />
+      /> : null}
 
       {tone ? <View style={[styles.fill, { backgroundColor: tone }]} /> : null}
 

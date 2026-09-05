@@ -896,3 +896,41 @@ En enhetlig sheen på båda gick inte: fotofallet har ingen marginal och strypte
 Uppmätt på Android över standardbakgrunden: **1,44x steg över panelen** och **1,62x mot den nakna bakgrunden intill**. Starkare än de 1,20x till 1,27x modellen förutsade, eftersom Androids egna mörka blurskikt drar ner panelens undre ände ytterligare.
 
 Den uppmätta ljusa hörnan blev `#37383c`, alltså mörkare än modellens värsta fall `#39435d`, vilket ger mer marginal snarare än mindre. Kontrasten mot den faktiska panelen: ink 10,93 · sekundär 7,22 · tertiär 5,94 · accent 5,86 och 5,84 · success 5,83 · danger 5,82. Allt klarar AA med god marginal.
+
+---
+
+## Beslutslogg · Prestanda och batteri, andra omgången
+
+Bygger vidare på pausningen av animationer och backoff vid misslyckad hämtning. Genomgången gjordes mot `vercel-react-native-skills`, installerad från vercel-labs/agent-skills, eftersom varken det egna skill-biblioteket eller förslagskatalogen hade något prestandaskill för mobilappar.
+
+### Fyra regler prövades, tre bröts
+
+**`animation-gpu-properties` (HIGH).** `UsageBar` animerade `width` i procent. Bredd är en layoutegenskap, så React Native räknade om layouten varje bildruta under hela övergången. Fyllningen är nu full bredd och skalas med `scaleX` från vänsterkanten, vilket körs på GPU:n utan att röra layouten.
+
+Uppmätt i webbygget efteråt: 62, 8 och 96 procent renderar på exakt rätt längd, med `transform-origin` i vänsterkanten. Den rundade högeränden komprimeras visserligen horisontellt av skalningen, men på staplar som är 7 till 10 punkter höga med 4 till 5 punkters radie blir det bråkdelar av en pixel och syns inte.
+
+**`js-hoist-intl` (LOW-MEDIUM).** Sex ställen byggde en ny `Intl.DateTimeFormat` eller `Intl.NumberFormat` vid varje anrop. Varje konstruktion gör en uppslagning av lokaldata, och de här körs vid varje omritning av varje rad som visar en tid eller ett procenttal. Alla ligger nu på modulnivå. Den som växlar mellan att visa år eller inte blev två hissade formatterare i stället för en byggd per anrop.
+
+**`react-compiler-reanimated-shared-values`.** React Compiler är påslagen i det här projektet, och regeln säger att `.value` gör att kompilatorn hoppar av. Alla delade värden använder nu `.get()` och `.set()`. Migreringen riktades mot de fem faktiska shared value-namnen, inte mot `.value` generellt, eftersom `option.value` i temalistan är ett vanligt objektfält som inte får röras.
+
+**`rendering-no-falsy-and` (CRITICAL).** Inga överträdelser. Koden använder redan ternära uttryck med `null`.
+
+### Bakgrundsbilderna kostade mest av allt
+De fyra Unsplash-bilderna låg på upp till 2400 pixlar. Det som spelar roll är inte filstorleken utan den avkodade bitmappen: 12 till 15 MB RAM per bild medan den visas, 57 MB för alla fyra. På en surfplatta med 1,5 GB är det mycket.
+
+Nedskalade till 1600 pixlar på långsidan vid JPEG-kvalitet 80:
+
+| | Före | Efter |
+| --- | --- | --- |
+| Buntade byte | 2,75 MB | 1,51 MB |
+| Avkodat i minnet | 57,1 MB | 25,4 MB |
+
+1600 täcker en telefon i sin egen upplösning och skalas bara måttligt upp på en surfplatta. Det syns inte, eftersom varje bakgrund ligger bakom en kontrastridå på 0,42 och suddas av panelerna ovanpå. Detaljerna förstörs av designen innan de når ögat. Kommandot för att återskapa finns i CREDITS.md.
+
+### Granskning mot web-design-guidelines
+De flesta reglerna är webbspecifika och saknar motsvarighet i React Native. Två gällde:
+
+- **`UsageBar` var osynlig för skärmläsare.** Rätt åtgärd visade sig vara att märka den som dekoration, inte att lägga till en `progressbar`: stapeln upprepar ett procenttal som redan läses upp som text bredvid den, så en roll hade fått skärmläsaren att säga samma siffra två gånger
+- **29 Ionicons saknar dolning för skärmläsare.** De som ligger inuti märkta `Pressable` grupperas och är oproblematiska, men de fristående ikonerna bredvid text är ren dekoration och blir brus. Inte åtgärdat i den här omgången, den handlade om prestanda
+
+`prefers-reduced-motion` respekteras i alla fyra animerade komponenter, och `tabular-nums` används redan på de numeriska fälten.

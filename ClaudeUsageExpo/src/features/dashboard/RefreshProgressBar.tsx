@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, {
   cancelAnimation,
@@ -9,6 +9,7 @@ import Animated, {
   withRepeat,
   withTiming,
 } from 'react-native-reanimated';
+import { AnimationActivityContext } from './renderActivity';
 
 const SEGMENT_RATIO = 0.34;
 const SWEEP_DURATION_MS = 1150;
@@ -31,33 +32,34 @@ export function RefreshProgressBar({
   trackColor: string;
 }) {
   const isReducedMotion = useReducedMotion();
+  const active = useContext(AnimationActivityContext);
   const [width, setWidth] = useState(0);
   const offset = useSharedValue(0);
 
   useEffect(() => {
-    if (!isActive || width === 0) {
+    if (!isActive || !active || width === 0) {
       cancelAnimation(offset);
-      offset.value = 0;
+      offset.set(0);
       return;
     }
 
     if (isReducedMotion) {
       // A still bar at rest reads as "busy" without any movement at all.
-      offset.value = width * (1 - SEGMENT_RATIO) / 2;
+      offset.set(width * (1 - SEGMENT_RATIO) / 2);
       return;
     }
 
-    offset.value = -width * SEGMENT_RATIO;
-    offset.value = withRepeat(
+    offset.set(-width * SEGMENT_RATIO);
+    offset.set(withRepeat(
       withTiming(width, { duration: SWEEP_DURATION_MS, easing: Easing.inOut(Easing.cubic) }),
       -1,
       false,
-    );
+    ));
 
     return () => cancelAnimation(offset);
-  }, [isActive, isReducedMotion, offset, width]);
+  }, [active, isActive, isReducedMotion, offset, width]);
 
-  const segmentStyle = useAnimatedStyle(() => ({ transform: [{ translateX: offset.value }] }));
+  const segmentStyle = useAnimatedStyle(() => ({ transform: [{ translateX: offset.get() }] }));
 
   return (
     <View

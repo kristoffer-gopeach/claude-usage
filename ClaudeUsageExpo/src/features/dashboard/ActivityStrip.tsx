@@ -69,8 +69,11 @@ export function ActivityStrip({
   );
 }
 
+/** Hoisted: constructing an Intl formatter per call repeats a locale-data lookup. */
+const PERCENT_FORMAT = new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 1 });
+
 function formatPercent(value: number): string {
-  return new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 1 }).format(value);
+  return PERCENT_FORMAT.format(value);
 }
 
 const styles = StyleSheet.create({

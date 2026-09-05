@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useContext, useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, {
   cancelAnimation,
@@ -9,6 +9,7 @@ import Animated, {
   withRepeat,
   withTiming,
 } from 'react-native-reanimated';
+import { AnimationActivityContext } from './renderActivity';
 
 /**
  * A slow halo behind a solid dot, used to mark that quota is being consumed right now.
@@ -17,26 +18,27 @@ import Animated, {
  */
 export function PulseDot({ color, size = 8 }: { color: string; size?: number }) {
   const isReducedMotion = useReducedMotion();
+  const active = useContext(AnimationActivityContext);
   const progress = useSharedValue(0);
 
   useEffect(() => {
-    if (isReducedMotion) {
-      progress.value = 0.45;
+    if (isReducedMotion || !active) {
+      progress.set(0.45);
       return;
     }
 
-    progress.value = withRepeat(
+    progress.set(withRepeat(
       withTiming(1, { duration: 1400, easing: Easing.out(Easing.quad) }),
       -1,
       false,
-    );
+    ));
 
     return () => cancelAnimation(progress);
-  }, [isReducedMotion, progress]);
+  }, [active, isReducedMotion, progress]);
 
   const haloStyle = useAnimatedStyle(() => ({
-    opacity: 0.45 * (1 - progress.value),
-    transform: [{ scale: 1 + progress.value * 1.9 }],
+    opacity: 0.45 * (1 - progress.get()),
+    transform: [{ scale: 1 + progress.get() * 1.9 }],
   }));
 
   const halo = size * 1.5;

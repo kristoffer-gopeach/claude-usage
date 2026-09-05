@@ -171,9 +171,10 @@ export type BuiltInBackground = {
 };
 
 /**
- * The first presets are generated artwork selected for a calm, dark centre behind the UI;
- * the remaining presets stay as lightweight gradients. Both kinds retain three fallback
- * colours so the picker can render immediately while an image is decoded.
+ * The first presets are bundled Unsplash images; sources and license are recorded in
+ * assets/images/glass-backgrounds/CREDITS.md. Image presets use the photo scrim and dark
+ * pane treatment, while the remaining presets stay as lightweight gradients.
+ * Existing IDs and filenames are retained so saved background choices remain valid.
  *
  * Every stop here is part of the contrast derivation above. Adding a lighter one than
  * #233156 would invalidate it, so re-measure before changing this list.
@@ -184,29 +185,29 @@ export type BuiltInBackground = {
 export const BUILT_IN_BACKGROUNDS: BuiltInBackground[] = [
   {
     id: 'aurora',
-    label: 'Norrskensväv',
-    note: 'Ljusband i aqua och syren',
+    label: 'Hologram',
+    note: 'Ljusreflexer i regnbågens färger',
     colors: ['#112B4B', '#121A3A', '#070A16'],
     image: require('../../../assets/images/glass-backgrounds/aurora-weave.jpg'),
   },
   {
     id: 'topographic',
-    label: 'Topografisk metall',
-    note: 'Pärlemor, isblått och mint',
+    label: 'Prisma',
+    note: 'Mjukt glas med skimrande färgskiftningar',
     colors: ['#263344', '#11161D', '#05070A'],
     image: require('../../../assets/images/glass-backgrounds/topographic-metal.jpg'),
   },
   {
     id: 'neon-grid',
-    label: 'Neonnät',
-    note: 'Luftigt nät i mjuk pastell',
+    label: 'Färgflöde',
+    note: 'Flytande mönster i rosa och blått',
     colors: ['#152743', '#17142E', '#070811'],
     image: require('../../../assets/images/glass-backgrounds/neon-grid.jpg'),
   },
   {
     id: 'cosmic-ink',
-    label: 'Kosmiskt bläck',
-    note: 'Mjuka färgfält i pastell',
+    label: 'Regnbågsmarmor',
+    note: 'Guld, turkos och magenta på ljus botten',
     colors: ['#332039', '#1B1024', '#09060D'],
     image: require('../../../assets/images/glass-backgrounds/cosmic-ink.jpg'),
   },

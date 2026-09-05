@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
-  Modal,
+  BackHandler,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -71,6 +71,8 @@ import { UsageBar } from '@/src/features/dashboard/UsageBar';
 import { MOTION } from '@/src/features/dashboard/motion';
 import { PulseDot } from '@/src/features/dashboard/PulseDot';
 import { RefreshProgressBar } from '@/src/features/dashboard/RefreshProgressBar';
+import { AnimationActivityContext, useAppActive } from '@/src/features/dashboard/renderActivity';
+import { nextRefreshDelay } from '@/src/domain/refreshPolicy';
 import {
   CODEX_HOME_URL,
   CODEX_LOGIN_URL,
@@ -91,7 +93,6 @@ const SAFARI_USER_AGENT =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
 const GOOGLE_LOGIN_UNAVAILABLE =
   'Google tillåter inte den här inbäddade inloggningen. Använd e-post eller Fortsätt med Apple.';
-const AUTO_REFRESH_INTERVAL_MS = 60_000;
 const KEEP_AWAKE_TAG = 'usage-monitor';
 const NEAR_LIMIT_THRESHOLD = 90;
 /**
@@ -109,6 +110,15 @@ const HISTORY_STORAGE_KEY = 'usage-monitor.history.v1';
 const RESET_FORMAT_STORAGE_KEY = 'usage-monitor.reset-format.v1';
 const BACKGROUND_STORAGE_KEY = 'usage-monitor.background.v1';
 const DEFAULT_THEME: ThemePreference = 'glass';
+
+/**
+ * Hoisted because constructing an Intl formatter does a locale-data lookup every time,
+ * and these run on every render of every row that shows a time or a percentage.
+ */
+const CLOCK_FORMAT = new Intl.DateTimeFormat('sv-SE', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const DAY_MONTH_FORMAT = new Intl.DateTimeFormat('sv-SE', { day: 'numeric', month: 'short' });
+const DAY_MONTH_YEAR_FORMAT = new Intl.DateTimeFormat('sv-SE', { day: 'numeric', month: 'short', year: 'numeric' });
+const ONE_DECIMAL_FORMAT = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 /** How long the landscape controls stay up after a tap before hiding themselves. */
 const MONITOR_CHROME_TIMEOUT_MS = 4_000;
 /** Kept out of the cache directory so the OS cannot reclaim the picked photo. */
@@ -397,6 +407,7 @@ export function UsageDashboard() {
   const requestProviderRef = useRef<UsageProvider | null>(null);
   const requestStartedAtRef = useRef(0);
   const requestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRefreshAttemptAtRef = useRef<ProviderRecord<number>>({ claude: 0, codex: 0 });
   const pendingRefreshRef = useRef(true);
   const isWebReadyRef = useRef(false);
@@ -419,6 +430,7 @@ export function UsageDashboard() {
   const [connectionsHydrated, setConnectionsHydrated] = useState(false);
   const [needsSignInByProvider, setNeedsSignInByProvider] = useState<ProviderRecord<boolean>>({ claude: true, codex: true });
   const [isShowingLogin, setIsShowingLogin] = useState(false);
+  const isAppActive = useAppActive();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   // Keyed per window, not one global setting: tapping the weekly row must not change the
   // five-hour row. The key is the window rather than the render site, so the same limit
@@ -429,9 +441,9 @@ export function UsageDashboard() {
   const [backgroundError, setBackgroundError] = useState<string | null>(null);
   // Android blurs this view rather than whatever happens to be behind each pane.
   const blurTargetRef = useRef<View | null>(null);
-  // A native Modal renders in a separate Android window, so it needs its own backdrop
-  // target. Reusing the dashboard target makes glass panes sample the hidden window and
-  // can leave the login screen transparent over the system's white modal background.
+  // The login layer paints its own opaque background over the dashboard, so it needs its
+  // own backdrop target. Reusing the dashboard target makes glass panes sample what the
+  // layer already covers and leaves the login screen looking transparent.
   const loginBlurTargetRef = useRef<View | null>(null);
   const [errorMessages, setErrorMessages] = useState<ProviderRecord<string | null>>({ claude: null, codex: null });
   const [loginStatus, setLoginStatus] = useState('Laddar Claudes säkra inloggning…');
@@ -452,6 +464,8 @@ export function UsageDashboard() {
   const clearRequestTimeout = useCallback(() => {
     if (requestTimeoutRef.current) clearTimeout(requestTimeoutRef.current);
     requestTimeoutRef.current = null;
+    if (loadRefreshTimeoutRef.current) clearTimeout(loadRefreshTimeoutRef.current);
+    loadRefreshTimeoutRef.current = null;
   }, []);
 
   // Called from the two places a live reading actually arrives, rather than derived in an
@@ -467,8 +481,9 @@ export function UsageDashboard() {
   }, []);
 
   const rememberProviderConnection = useCallback((provider: UsageProvider, connected: boolean) => {
+    if (connectedProvidersRef.current[provider] === connected) return;
     connectedProvidersRef.current = { ...connectedProvidersRef.current, [provider]: connected };
-    void AsyncStorage.setItem(CONNECTION_STORAGE_KEY, JSON.stringify(connectedProvidersRef.current));
+    void AsyncStorage.setItem(CONNECTION_STORAGE_KEY, JSON.stringify(connectedProvidersRef.current)).catch(() => {});
   }, []);
 
   const refreshCodexProvider = useCallback(async () => {
@@ -696,62 +711,27 @@ export function UsageDashboard() {
   }, [activeProvider, refreshProvider]);
 
   useEffect(() => {
-    if (!connectionsHydrated) return;
-    if (!connectedProvidersRef.current[activeProvider]) {
-      setNeedsSignInByProvider((current) => ({ ...current, [activeProvider]: true }));
-      setIsRefreshing(false);
-      return;
-    }
-
-    setNeedsSignInByProvider((current) => ({ ...current, [activeProvider]: false }));
-    pendingRefreshRef.current = true;
-    lastRefreshAttemptAtRef.current[activeProvider] = 0;
-    refreshProvider(activeProvider);
-  }, [activeProvider, connectionsHydrated, refreshProvider]);
-
-  useEffect(() => {
     return () => {
       clearRequestTimeout();
+      codexLoginGenerationRef.current += 1;
     };
   }, [clearRequestTimeout]);
 
   useEffect(() => {
-    const refreshIfDue = () => {
-      if (AppState.currentState !== 'active' || isShowingLogin) return;
-      if (!connectedProvidersRef.current[activeProvider]) return;
-
-      const now = Date.now();
-      if (now - lastRefreshAttemptAtRef.current[activeProvider] < AUTO_REFRESH_INTERVAL_MS) return;
-
-      refresh();
+    // No polling timer while signed out, backgrounded or editing login. Preserve the
+    // last attempt when effects restart so closing login cannot fetch the same data twice.
+    if (!connectionsHydrated || !isAppActive || isShowingLogin || needsSignIn) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const delay = () => nextRefreshDelay(lastRefreshAttemptAtRef.current[activeProvider], Date.now(), isStale);
+    const tick = () => {
+      if (AppState.currentState !== 'active' || !connectedProvidersRef.current[activeProvider]) return;
+      if (delay() === 0) refresh();
+      timer = setTimeout(tick, Math.max(1000, delay()));
     };
-
-    // The timer is torn down on the way to the background rather than left ticking to hit
-    // the AppState guard above, so a backgrounded app stops waking the JS thread at all.
-    // Coming back to the foreground refreshes immediately and starts it again, so nothing
-    // is lost by not counting while away.
-    let interval: ReturnType<typeof setInterval> | null = setInterval(
-      refreshIfDue,
-      AUTO_REFRESH_INTERVAL_MS,
-    );
-
-    const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
-        refreshIfDue();
-        interval ??= setInterval(refreshIfDue, AUTO_REFRESH_INTERVAL_MS);
-        return;
-      }
-      if (interval) {
-        clearInterval(interval);
-        interval = null;
-      }
-    });
-
-    return () => {
-      if (interval) clearInterval(interval);
-      subscription.remove();
-    };
-  }, [activeProvider, isShowingLogin, refresh]);
+    if (delay() === 0) tick();
+    else timer = setTimeout(tick, delay());
+    return () => clearTimeout(timer);
+  }, [activeProvider, connectionsHydrated, isAppActive, isShowingLogin, isStale, needsSignIn, refresh]);
 
   const handleLoadEnd = useCallback(
     (event: { nativeEvent: { url: string } }) => {
@@ -768,7 +748,12 @@ export function UsageDashboard() {
 
       setLoginStatus('Sidan är laddad. Logga in med e-post och tryck sedan Klar.');
       if (pendingRefreshRef.current || isShowingLogin) {
-        setTimeout(() => refreshProvider(expectedProvider), 350);
+        if (loadRefreshTimeoutRef.current) clearTimeout(loadRefreshTimeoutRef.current);
+        loadRefreshTimeoutRef.current = setTimeout(() => {
+          loadRefreshTimeoutRef.current = null;
+          if (AppState.currentState !== 'active' || webViewProviderRef.current !== expectedProvider) return;
+          refreshProvider(expectedProvider);
+        }, 350);
       }
     },
     [isShowingLogin, refreshProvider],
@@ -1124,8 +1109,35 @@ export function UsageDashboard() {
   const isSignedOutLandscape = width > height && !snapshot && !isShowingLogin;
   const canShareObservation = snapshot !== null && lastRefreshDuration !== null;
 
+  // The login sheet is an in-tree overlay rather than a Modal because the WebView inside it
+  // is also the only place the usage request can run. A Modal unmounts its children while
+  // hidden, which left every background refresh injecting into nothing and failing after the
+  // timeout, even with a perfectly valid session. Keeping the layer mounted and merely
+  // invisible keeps that session warm between openings.
+  const loginOpacity = useSharedValue(0);
+
+  useEffect(() => {
+    const target = isShowingLogin ? 1 : 0;
+    loginOpacity.set(isReducedMotion
+      ? target
+      : withTiming(target, isShowingLogin ? MOTION.enter : MOTION.exit));
+  }, [isReducedMotion, isShowingLogin, loginOpacity]);
+
+  const loginOverlayStyle = useAnimatedStyle(() => ({ opacity: loginOpacity.get() }));
+
+  useEffect(() => {
+    if (!isShowingLogin) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      dismissLogin();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [dismissLogin, isShowingLogin]);
+
   return (
+    <AnimationActivityContext.Provider value={isAppActive && !isShowingLogin && !isMenuOpen}>
     <GlassBackdropProvider
+      active={isAppActive && !isShowingLogin}
       photo={isGlass && (isImageBackground(backgroundId) || (backgroundId === 'custom' && customBackgroundUri !== null))}
       targetRef={blurTargetRef}>
       <View style={[styles.root, isMonitorMode && styles.monitorRoot]}>
@@ -1137,7 +1149,7 @@ export function UsageDashboard() {
           />
         ) : null}
         {isHalloween ? <HalloweenAmbience /> : null}
-        {isMonitorMode ? <KeepScreenAwake /> : null}
+        {isMonitorMode && isAppActive && !isShowingLogin ? <KeepScreenAwake /> : null}
         <StatusBar
           hidden={isMonitorMode}
           style={isMonitorMode || isHalloween || isGlass ? 'light' : 'auto'}
@@ -1303,7 +1315,7 @@ export function UsageDashboard() {
                     </Text>
                     <Text style={styles.signInText}>
                       {errorMessage
-                        ? 'Kontrollera anslutningen och försök igen. Om sessionen har löpt ut får du logga in på nytt.'
+                        ? errorMessage
                         : needsSignIn
                           ? activeProvider === 'codex'
                             ? 'Anslut ditt OpenAI-konto för att se aktuella Codex-gränser och återställningstider.'
@@ -1352,17 +1364,17 @@ export function UsageDashboard() {
           </SafeAreaView>
         )}
 
-        <Modal
-          animationType="slide"
-          hardwareAccelerated
-          onRequestClose={dismissLogin}
-          presentationStyle="fullScreen"
-          visible={isShowingLogin}>
+        <Animated.View
+          accessibilityElementsHidden={!isShowingLogin}
+          importantForAccessibility={isShowingLogin ? 'auto' : 'no-hide-descendants'}
+          pointerEvents={isShowingLogin ? 'auto' : 'none'}
+          style={[styles.loginOverlay, loginOverlayStyle]}>
           <GlassBackdropProvider
+            active={isAppActive && isShowingLogin}
             photo={isGlass && (isImageBackground(backgroundId) || (backgroundId === 'custom' && customBackgroundUri !== null))}
             targetRef={loginBlurTargetRef}>
             <View style={styles.loginModal}>
-              {isGlass ? (
+              {isGlass && isShowingLogin ? (
                 <AppBackground
                   backgroundId={backgroundId}
                   customUri={customBackgroundUri}
@@ -1539,7 +1551,7 @@ export function UsageDashboard() {
               </SafeAreaView>
             </View>
           </GlassBackdropProvider>
-        </Modal>
+        </Animated.View>
 
         {isMenuOpen ? (
           <Animated.View
@@ -1782,6 +1794,7 @@ export function UsageDashboard() {
         ) : null}
       </View>
     </GlassBackdropProvider>
+    </AnimationActivityContext.Provider>
   );
 }
 
@@ -1823,10 +1836,10 @@ function ProviderSwitcher({
 
   useEffect(() => {
     const target = activeIndex * optionWidth;
-    offset.value = isReducedMotion ? target : withTiming(target, MOTION.move);
+    offset.set(isReducedMotion ? target : withTiming(target, MOTION.move));
   }, [activeIndex, isReducedMotion, offset, optionWidth]);
 
-  const indicatorStyle = useAnimatedStyle(() => ({ transform: [{ translateX: offset.value }] }));
+  const indicatorStyle = useAnimatedStyle(() => ({ transform: [{ translateX: offset.get() }] }));
 
   return (
     <View
@@ -2351,7 +2364,7 @@ function buildPrimaryNote({
 }
 
 function formatClock(date: Date): string {
-  return new Intl.DateTimeFormat('sv-SE', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date);
+  return CLOCK_FORMAT.format(date);
 }
 
 /**
@@ -2366,7 +2379,7 @@ function formatClockWithDay(date: Date, now = new Date()): string {
   const tomorrow = new Date(now.getTime() + 86_400_000);
   if (date.toDateString() === tomorrow.toDateString()) return `i morgon kl. ${time}`;
 
-  const day = new Intl.DateTimeFormat('sv-SE', { day: 'numeric', month: 'short' }).format(date);
+  const day = DAY_MONTH_FORMAT.format(date);
   return `${day} kl. ${time}`;
 }
 
@@ -2410,11 +2423,9 @@ function formatResetClock(window: UsageWindow, now = new Date()): string {
   if (date.getTime() <= now.getTime()) return 'Gränsen har återställts';
   if (date.toDateString() === now.toDateString()) return `Återställs kl. ${time}`;
 
-  const day = new Intl.DateTimeFormat('sv-SE', {
-    day: 'numeric',
-    month: 'short',
-    year: date.getFullYear() === now.getFullYear() ? undefined : 'numeric',
-  }).format(date);
+  // Two hoisted formatters rather than one built per call: the only thing that varies is
+  // whether the year is shown, and that is a choice between two fixed shapes.
+  const day = (date.getFullYear() === now.getFullYear() ? DAY_MONTH_FORMAT : DAY_MONTH_YEAR_FORMAT).format(date);
   return `Återställs ${day} kl. ${time}`;
 }
 
@@ -2450,7 +2461,7 @@ function formatSpan(spanMs: number): string {
 
 /** One decimal, because the payload carries fractions and rounding to whole percent would hide them. */
 function formatDelta(value: number): string {
-  return new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value);
+  return ONE_DECIMAL_FORMAT.format(value);
 }
 
 function formatDuration(milliseconds: number): string {
@@ -2824,6 +2835,14 @@ function createStyles(
     assuranceText: { flex: 1, color: palette.secondary, fontSize: 14, lineHeight: 20 },
     errorCard: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', padding: 14, borderRadius: 12, backgroundColor: palette.errorBackground },
     errorText: { flex: 1, color: palette.errorText, fontSize: 13, lineHeight: 19 },
+    loginOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 30,
+    },
     loginModal: { flex: 1, backgroundColor: palette.surface },
     loginSafeArea: { flex: 1 },
     loginHeader: { minHeight: 56, paddingVertical: 8, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.line, backgroundColor: palette.surface },
